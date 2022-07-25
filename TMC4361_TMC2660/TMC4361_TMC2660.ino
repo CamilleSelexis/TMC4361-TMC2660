@@ -6,7 +6,7 @@ Works when the step/dir are controlled by the arduino
 */
 
 #include <SPI.h>
-
+#include "TMC4361A_Register.h"
 // Note: You also have to connect GND, 5V/VIO and VM.
 //       A connection diagram can be found in the schematics.
 #define EN_PIN    7 //enable (CFG6)
@@ -28,10 +28,15 @@ Works when the step/dir are controlled by the arduino
 #define REG_DRVCONF    0x0E
 
 //TMC4361 registers
-#define REG_COVERLOW 0x6C
-#define REG_SPI_OUTCONF 0x04
+#define ADR_COVERLOW 0x6C
+#define ADR_SPIOUTCONF 0x04
 #define WRITE_FLAG 0x80
-
+bool step_state = false;
+ISR(TIMER3_COMPA_vect){
+  //STEP_PORT ^= 1 << STEP_BIT_POS;
+  step_state = !step_state;
+  digitalWrite(STEP_PIN, step_state);
+}
 void setup()
 {
   //set pins
@@ -56,8 +61,20 @@ void setup()
   //set up Timer1
   TCCR1A = bit (COM1A0); //toggle OC1A on Compare Match
   TCCR1B = bit (WGM12) | bit (CS10); //CTC, no prescaling
-  OCR1A = 0; //output every 2 cycle on pin 11 -> 8Mhz
-   
+  OCR1A = 0; //output every 1 cycle on pin 11 -> 16Mhz
+
+  //set up Timer3 for sending step pulses
+  {
+    cli(); //disable interrupts
+    TCCR3A = 0;
+    TCCR3B = 0;
+    TCNT3 = 0; //init counter value to 0
+    OCR3A = 10; //Define freq of interrupt 16*10^6/1024 -1
+    TCCR3B |= (1 << WGM12); // CTC mode
+    TCCR3B |= (1 << CS11); //enable prescaler at 8
+    TIMSK3 |= (1 << OCIE3A); //Timer compare interrupt
+    sei(); //enable interrupts
+  }
   //init serial port
   Serial.begin(115200); //init serial port and set baudrate
   while(!Serial); //wait for serial port to connect (needed for Leonardo only)
@@ -79,7 +96,17 @@ void setup()
   writeReg(0x6C,0x000E0010); //COVER_LOW DRVCONF
   writeReg(0x6C,0x00000100); //COVER_LOW DRVCTRL 256 microsteps
   writeReg(0x6C,0x000A8202); //COVER_LOW
-
+  uint32_t DIR_SETUP_TIME = 10;//#clock cycle step pulse wait after dir change
+  uint32_t STP_LENGTH_ADD = 25;//#clock cycle step pulse is held
+  writeReg(0x10,(DIR_SETUP_TIME << 16 | STP_LENGTH_ADD));
+  uint32_t RAMPMODE = 0b100; //No ramp positioning mode
+  writeReg(0x20,RAMPMODE);
+  uint32_t VMAX = 5000; //<16777215
+  writeReg(0x24,VMAX);
+  uint32_t XACTUAL = 0;
+  writeReg(0x21,XACTUAL);
+  uint32_t XTARGET = 1000;//5 full turns
+  writeReg(0x37,XTARGET);
   //outputs on (LOW active)
   digitalWrite(EN_PIN, LOW);
   Serial.println("Setup end");
@@ -95,14 +122,15 @@ void loop()
   if((ms-last_time) > 2000) //run every 2s
   {
     last_time = ms;
-    readReg(0x00);
+    readReg(0x21); //read Xactual
   }
+
   /*if(digitalRead(STALL_PIN)){
     Serial.println("Motor Stall");
   }*/
   //make steps
-  digitalWrite(STEP_PIN, HIGH);
-  delayMicroseconds(5);
-  digitalWrite(STEP_PIN, LOW);
-  delayMicroseconds(5);
+//  digitalWrite(STEP_PIN, HIGH);
+//  delayMicroseconds(5);
+//  digitalWrite(STEP_PIN, LOW);
+//  delayMicroseconds(5);
 }
