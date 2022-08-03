@@ -22,7 +22,9 @@ void writeReg(uint8_t address, uint32_t command){
  Serial.print("Received: ");
  Serial.println(i_datagram,HEX);
 }
-void readReg(uint8_t address){
+//To obtain the correct data the registers need to be read 2 times
+//This can be optimized for multiple registers to only n+1 read
+unsigned long readReg(uint8_t address){
    
  delay(100);
  unsigned long i_datagram = 0;
@@ -41,6 +43,7 @@ void readReg(uint8_t address){
  //i_datagram <<= 8;
  digitalWrite(CS_PIN,HIGH);
  
- Serial.print("Received: ");
- Serial.println(i_datagram,HEX);
+ /*Serial.print("Received: ");
+ Serial.println(i_datagram,HEX);*/
+ return i_datagram;
 }
