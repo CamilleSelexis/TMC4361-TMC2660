@@ -7,7 +7,13 @@ Works when the step/dir are controlled by the arduino
 
 #include <SPI.h>
 #include "TMC4361A_Register.h"
-#include <SoftSPIB.h>
+//#include <SoftSPIB.h>
+#include "Arduino.h"
+#include "PwmOut.h"
+#include "pinDefinitions.h"
+#include "PinNames.h"
+#define _TIMERINTERRUPT_LOGLEVEL_     0
+#include "Portenta_H7_TimerInterrupt.h"
 
 #define CS_HIGH delayMicroseconds(20);digitalWrite(CS_ENC,HIGH);delayMicroseconds(20);
 #define CS_LOW delayMicroseconds(20);digitalWrite(CS_ENC,LOW);delayMicroseconds(20);
@@ -22,22 +28,21 @@ Works when the step/dir are controlled by the arduino
 #define MOSI_PIN D8 //SDI/MOSI (ICSP: 4, Uno: 11, Mega: 51)
 #define MISO_PIN D10 //SDO/MISO (ICSP: 1, Uno: 12, Mega: 50)
 #define SCK_PIN  D9 //CLK/SCK  (ICSP: 3, Uno: 13, Mega: 52)
-#define CLK16_PIN D14 //CLK16_PIN 
+#define CLK16_PIN D1 //CLK16_PIN Timer pin //Timer 1
 
 #define SW_MOSI D0
 #define SW_MISO D2
 #define SW_SCK D1
 #define CS_ENC D3
 
-SoftSPIB mySPI(SW_MOSI,SW_MISO,SW_SCK);
+//SoftSPIB mySPI(SW_MOSI,SW_MISO,SW_SCK);
 
 #define WRITE_FLAG 0x80
 bool step_state = false;
-ISR(TIMER3_COMPA_vect){
-  //STEP_PORT ^= 1 << STEP_BIT_POS;
-  step_state = !step_state;
-  digitalWrite(STEP_PIN, step_state);
-}
+
+#define TIMER1_FREQ 16000000
+
+Portenta_H7_Timer ITimer0(TIM15);
 void setup()
 {
   //set pins
@@ -69,37 +74,25 @@ void setup()
   pinMode(SW_MOSI,INPUT);
   pinMode(SW_SCK,INPUT);
   
-  //set up Timer1
-  TCCR1A = bit (COM1A0); //toggle OC1A on Compare Match
-  TCCR1B = bit (WGM12) | bit (CS10); //CTC, no prescaling
-  OCR1A = 0; //output every 1 cycle on pin 11 -> 16Mhz
+  //set up Timer1 for clk generation
+  mbed::PwmOut* pwm = new mbed::PwmOut(digitalPinToPinName(D1));
+  digitalPinToPwm(D1) = pwm;
+  TIM1->PSC = 0;
+  TIM1->ARR = 10; //Freq = F_CPU/(ARR*(PSC+1)) -> 200/10 = 20 MHz
+  TIM1->CCR1 = 5; //Used to define the duty cycle D1 HIGH when CNT<CCR1 & D1 LOW when CNT>CCR1
 
-  //set up Timer3 for sending step pulses
-  /*{
-    cli(); //disable interrupts
-    TCCR3A = 0;
-    TCCR3B = 0;
-    TCNT3 = 0; //init counter value to 0
-    OCR3A = 10; //Define freq of interrupt 16*10^6/1024 -1
-    TCCR3B |= (1 << WGM12); // CTC mode
-    TCCR3B |= (1 << CS11); //enable prescaler at 8
-    TIMSK3 |= (1 << OCIE3A); //Timer compare interrupt
-    sei(); //enable interrupts
-  }*/
   //init serial port
   Serial.begin(115200); //init serial port and set baudrate
   while(!Serial); //wait for serial port to connect (needed for Leonardo only)
   Serial.println("\nStart...");
   //init softSPI
-  mySPI.begin();
+  /*mySPI.begin();
   mySPI.setBitOrder(MSBFIRST);
   mySPI.setDataMode(SPI_MODE2);
-  mySPI.setClockDivider(SPI_CLOCK_DIV4);
+  mySPI.setClockDivider(SPI_CLOCK_DIV4);*/
   //init SPI
   SPI.begin();
-  SPI.setDataMode(SPI_MODE3); //SPI Mode 3
-  SPI.setBitOrder(MSBFIRST); //MSB first
-  SPI.setClockDivider(SPI_CLOCK_DIV8); //clk=Fcpu/128
+  SPI.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE3));
 
   uint32_t SPI_OUT_CONF = 0x8440010B;
   writeReg(0x04,SPI_OUT_CONF); //SPI_OUT_CONF 844 -> SPI timing conf 10B -> 1us between poll TMC26x S/D output
@@ -200,7 +193,7 @@ void loop()
   }
 }
 
-void readEncoder(){
+/*void readEncoder(){
     digitalWrite(CS_ENC,LOW);
     delayMicroseconds(50);  
     //The timing seems to miss the last bit
@@ -219,11 +212,11 @@ void readEncoder(){
     //angle = (angle<<1);//removes garbage MSB
     //Serial.print("angle = ");Serial.println(angle,HEX);
     uint8_t status_bits = (angle>>12);//take the 4 first bit 0/EF/UV/Parity
-    /*if(status_bits >= 0x8){ //if MSB == 1 then invert MSB angle
+    if(status_bits >= 0x8){ //if MSB == 1 then invert MSB angle
       uint16_t mask = 0x0800;
       angle = angle^mask; //XOR
     }
-    //Serial.print("angle after correction = ");Serial.println(angle,HEX);*/
+    //Serial.print("angle after correction = ");Serial.println(angle,HEX);
     float angle_deg  = float((angle&0x0fff))*360/4096;//Should be 4096 but we miss the LSB
     //Serial.print("Status 0x20 = ");Serial.println(status_bits,BIN);
     Serial.print("angle = ");Serial.println(angle_deg);
@@ -248,4 +241,4 @@ void readEncoder(){
     Serial.println("---------");
 
   
-}
+}*/
