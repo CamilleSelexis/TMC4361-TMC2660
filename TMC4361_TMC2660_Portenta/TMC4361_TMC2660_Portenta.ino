@@ -7,7 +7,7 @@ Works when the step/dir are controlled by the arduino
 
 #include <SPI.h>
 #include "TMC4361A_Register.h"
-//#include <SoftSPIB.h>
+#include <SoftSPIB.h>
 #include "Arduino.h"
 #include "PwmOut.h"
 #include "pinDefinitions.h"
@@ -30,12 +30,13 @@ Works when the step/dir are controlled by the arduino
 #define SCK_PIN  D9 //CLK/SCK  (ICSP: 3, Uno: 13, Mega: 52)
 #define CLK16_PIN D1 //CLK16_PIN Timer pin //Timer 1
 
-#define SW_MOSI D0
-#define SW_MISO D2
-#define SW_SCK D1
-#define CS_ENC D3
+#define SW_MOSI D2
+#define SW_MISO D4
+#define SW_SCK D3
+#define CS_ENC D5
 
-//SoftSPIB mySPI(SW_MOSI,SW_MISO,SW_SCK);
+SoftSPIB mySPI(SW_MOSI,SW_MISO,SW_SCK);
+//MbedSPI mySPI(SW_MOSI,SW_MISO,SW_SCK);
 
 #define WRITE_FLAG 0x80
 bool step_state = false;
@@ -57,11 +58,8 @@ void setup()
   pinMode(CS_PIN, OUTPUT);
   digitalWrite(CS_PIN, HIGH);
   pinMode(MOSI_PIN, OUTPUT);
-  //digitalWrite(MOSI_PIN, LOW);
   pinMode(MISO_PIN, INPUT);
-  //digitalWrite(MISO_PIN, LOW);
   pinMode(SCK_PIN, OUTPUT);
-  //digitalWrite(SCK_PIN, LOW);
   pinMode(CLK16_PIN,OUTPUT);
 
   /*pinMode(CS_ENC,OUTPUT);digitalWrite(CS_ENC,HIGH);
@@ -85,22 +83,24 @@ void setup()
   Serial.begin(115200); //init serial port and set baudrate
   while(!Serial); //wait for serial port to connect (needed for Leonardo only)
   Serial.println("\nStart...");
-  //init softSPI
-  /*mySPI.begin();
+  //init SPI encoder
+  mySPI.begin();
+  //mySPI.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE2));
   mySPI.setBitOrder(MSBFIRST);
   mySPI.setDataMode(SPI_MODE2);
-  mySPI.setClockDivider(SPI_CLOCK_DIV4);*/
-  //init SPI
+  mySPI.setClockDivider(128);
+  //mySPI.end();
+  //init SPI driver
   SPI.begin();
   SPI.beginTransaction(SPISettings(1000000,MSBFIRST,SPI_MODE3));
-
+  //init SPI encoder
   uint32_t SPI_OUT_CONF = 0x8440010B;
   writeReg(0x04,SPI_OUT_CONF); //SPI_OUT_CONF 844 -> SPI timing conf 10B -> 1us between poll TMC26x S/D output
   uint32_t GENERAL_CONF = 0x00006020;
   //writeReg(0x00,0x00006020); //Internal Step control Base value
   uint32_t STEP_CONF = 0x00FB0C080;
   writeReg(0x0A,0x00FB0C80); // 200 steps/rev 256 microsteps
-  uint32_t CLK_FREQ = 0x00F424000;
+  uint32_t CLK_FREQ = 0x00F42400;
   writeReg(0x31,CLK_FREQ); //16MHz external clock
   
   //Encoder setup
@@ -128,7 +128,7 @@ void setup()
   //readReg(0x6B);
   //TMC2660 config
   writeReg(0x6C,0x000901B4); //COVER_LOW CHOPCONF
-  writeReg(0x6C,0x000D4107); //COVER_LOW SGSCONF CS
+  writeReg(0x6C,0x000D4107); //COVER_LOW SGSCONF CS D4107
   writeReg(0x6C,0x000E0010); //COVER_LOW DRVCONF SG & SPI interface
   writeReg(0x6C,0x00000000); //COVER_LOW DRVCTRL 256 microsteps
   writeReg(0x6C,0x000A8202); //COVER_LOW
@@ -163,7 +163,7 @@ void loop()
   uint32_t data;
   uint8_t s;
 
-  if((ms-last_time) > 1000) //run every 2s
+  if((ms-last_time) > 2000) //run every 2s
   {
     last_time = ms;
     data = readReg(0x21); //read Xactual //Return last data (Status flag)
@@ -172,73 +172,13 @@ void loop()
     uint32_t Xtarget = readReg(0x0F); //read Status flag register return Xtarget
     Serial.print("Actual pos = ");Serial.print(Xactual);Serial.print(" Actual speed = ");
     Serial.print(Vactual);Serial.print(" Actual target = ");Serial.println(Xtarget);
+    //writeReg(0x6C,0x000901B0); //COVER_LOW CHOPCONF Disable the MOSFET
     /*if(Xactual == Xtarget){
-      //writeReg(0x6C,0x000901B0); //COVER_LOW CHOPCONF Disable the MOSFET
+      writeReg(0x6C,0x000901B0); //COVER_LOW CHOPCONF Disable the MOSFET
       //Serial.println("MOSFET disabled");
       writeReg(0x37,(Xtarget==256000)?0:256000);
     }*/
-    /*data = readReg(0x6B);
-    data = readReg(0x51);*/
-    data = readReg(0x6A); //read data from encoder
-    uint32_t Eangle = readReg(0x50); //read computed position
-    
-    float angle_deg  = float((Eangle&0x0fff))*360/4096;//Should be 4096 but we miss the LSB
-    //Serial.print("Status 0x20 = ");Serial.println(status_bits,BIN);
-    Serial.print("angle = ");Serial.println(angle_deg);
-    //data = readReg(0x51);
-    //Serial.print("Encoder angle = 0x");Serial.println(Eangle,HEX);
-    Serial.print("External angle = ");Serial.println(readReg(0x50));
-    //readEncoder();
-    Serial.println("----------------");
+    readEncoder();
+    readMultiturn();
   }
 }
-
-/*void readEncoder(){
-    digitalWrite(CS_ENC,LOW);
-    delayMicroseconds(50);  
-    //The timing seems to miss the last bit
-    //MSB is thus garbage
-    uint8_t cmd = 0x20;
-    uint16_t angle = 0;
-    angle = mySPI.transfer(cmd);//send streaming command
-    angle <<= 8;
-    angle |= mySPI.transfer(0x00);
-    CS_HIGH;CS_LOW;
-    //Read it again so it is updated
-    angle = 0;
-    angle = mySPI.transfer(cmd);//send streaming command
-    angle <<= 8;
-    angle |= mySPI.transfer(0x00);
-    //angle = (angle<<1);//removes garbage MSB
-    //Serial.print("angle = ");Serial.println(angle,HEX);
-    uint8_t status_bits = (angle>>12);//take the 4 first bit 0/EF/UV/Parity
-    if(status_bits >= 0x8){ //if MSB == 1 then invert MSB angle
-      uint16_t mask = 0x0800;
-      angle = angle^mask; //XOR
-    }
-    //Serial.print("angle after correction = ");Serial.println(angle,HEX);
-    float angle_deg  = float((angle&0x0fff))*360/4096;//Should be 4096 but we miss the LSB
-    //Serial.print("Status 0x20 = ");Serial.println(status_bits,BIN);
-    Serial.print("angle = ");Serial.println(angle_deg);
-    CS_HIGH;CS_LOW; 
-    uint16_t turn = 0;
-    cmd = 0x2C;
-    turn = mySPI.transfer(cmd);//send streaming command
-    turn <<= 8;
-    turn |= mySPI.transfer(0x00);
-    CS_HIGH;CS_LOW;
-    turn = mySPI.transfer(cmd);//send streaming command
-    turn <<= 8;
-    turn |= mySPI.transfer(0x00);
-    status_bits = 0;
-    //turn = (turn<<1);//remove the garbage MSB
-    status_bits = (turn>>12);//First 4 bits are status ID(110)/Parity
-    int temp = (turn&0x0fff);
-    float turn_count = float(temp)/8;
-    CS_HIGH;
-    //Serial.print("Status 0x2C = ");Serial.println(status_bits,BIN);
-    Serial.print("turn = ");Serial.println(turn_count);
-    Serial.println("---------");
-
-  
-}*/
